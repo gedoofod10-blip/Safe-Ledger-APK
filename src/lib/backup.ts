@@ -99,6 +99,14 @@ export async function shareBackup(): Promise<void> {
 }
 
 /**
+ * ⭐ التعديل المنقذ: إرجاع دالة التصدير القديمة عشان Vercel ما يضرب (Build Error)
+ * أي ملف قديم بيحاول يستدعي exportBackup هيشتغل بدون مشاكل
+ */
+export async function exportBackup(): Promise<void> {
+  return downloadBackup();
+}
+
+/**
  * 3. استيراد النسخة الاحتياطية (يستقبل JSON فقط)
  */
 export async function importBackup(file: File): Promise<{ clients: number; transactions: number }> {
