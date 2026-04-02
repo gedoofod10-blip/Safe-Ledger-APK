@@ -3,16 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { getAllClients, updateClient } from '@/lib/db';
 import { Card } from '@/components/ui/card';
 import { toast } from 'sonner';
-import { ArrowRight, Plus, Pencil, Trash2, X, Share2, Download } from 'lucide-react';
-import { exportBackup, importBackup } from '@/lib/backup';
+import { ArrowRight, Plus, Pencil, Trash2, X, Share2, Download, Save } from 'lucide-react';
+// التعديل: استيراد الدالتين الجداد بدل التصدير القديم
+import { downloadBackup, shareBackup, importBackup } from '@/lib/backup';
 
 const SettingsPage = () => {
   const navigate = useNavigate();
   const [activeModal, setActiveModal] = useState<string | null>(null);
-
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // إعدادات التطبيق
   const [settings, setSettings] = useState(() => {
     const saved = localStorage.getItem('appSettings');
     const defaultSettings = {
@@ -24,7 +23,6 @@ const SettingsPage = () => {
     return saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings;
   });
 
-  // حالات التصنيفات الديناميكية
   const [categories, setCategories] = useState<string[]>([]);
   const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
   const [showAddCatModal, setShowAddCatModal] = useState(false);
@@ -32,14 +30,12 @@ const SettingsPage = () => {
   const [selectedCatAction, setSelectedCatAction] = useState<string | null>(null);
   const [newCatName, setNewCatName] = useState('');
 
-  // مؤقت الضغط المطول
   const pressTimer = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     localStorage.setItem('appSettings', JSON.stringify(settings));
   }, [settings]);
 
-  // جلب التصنيفات وعدد العملاء من قاعدة البيانات
   const loadCategoriesData = async () => {
     const savedCatsRaw = localStorage.getItem('customCategories');
     let currentCats: string[] = [];
@@ -57,7 +53,6 @@ const SettingsPage = () => {
     clients.forEach(c => {
       const cat = c.category || 'عام';
       counts[cat] = (counts[cat] || 0) + 1;
-      
       if (!currentCats.includes(cat) && cat !== 'عام') {
         currentCats.push(cat);
       }
@@ -75,7 +70,6 @@ const SettingsPage = () => {
 
   const toggle = (key: string) => setSettings({...settings, [key]: !settings[key as keyof typeof settings]});
 
-  // دوال إدارة التصنيفات
   const handleAddCategory = () => {
     const trimmed = newCatName.trim();
     if (!trimmed) return toast.error('أدخل اسم التصنيف');
@@ -118,12 +112,8 @@ const SettingsPage = () => {
 
   const handleDeleteCategory = async (catName: string) => {
     if (catName === 'عام') return toast.error('لا يمكن حذف التصنيف الأساسي "عام"');
-
     const confirm = window.confirm(`هل أنت متأكد من حذف تصنيف "${catName}"؟\nسيتم نقل جميع الحسابات الموجودة به إلى تصنيف "عام".`);
-    if (!confirm) {
-        setSelectedCatAction(null);
-        return;
-    }
+    if (!confirm) { setSelectedCatAction(null); return; }
 
     const clients = await getAllClients();
     const clientsToMove = clients.filter(c => c.category === catName);
@@ -146,20 +136,26 @@ const SettingsPage = () => {
     }, 500);
   };
 
-  const handleLongPressEnd = () => {
-    if (pressTimer.current) clearTimeout(pressTimer.current);
-  };
+  const handleLongPressEnd = () => { if (pressTimer.current) clearTimeout(pressTimer.current); };
 
-  // دوال النسخ الاحتياطي
-  const handleBackupShare = async () => {
-    const loadingToast = toast.loading('جاري تجهيز النسخة الاحتياطية...');
+  // الدوال الجديدة المنفصلة
+  const handleDownloadFile = async () => {
+    const loadingToast = toast.loading('جاري تجهيز وتنزيل ملف JSON...');
     try {
-      await exportBackup(); 
+      await downloadBackup(); 
       toast.dismiss(loadingToast);
-      toast.success('تم تصدير وحفظ النسخة الاحتياطية بنجاح ✓');
     } catch (error) {
       toast.dismiss(loadingToast);
-      toast.error('فشل في تصدير النسخة الاحتياطية');
+    }
+  };
+
+  const handleShareNative = async () => {
+    const loadingToast = toast.loading('جاري فتح قائمة المشاركة...');
+    try {
+      await shareBackup(); 
+      toast.dismiss(loadingToast);
+    } catch (error) {
+      toast.dismiss(loadingToast);
     }
   };
 
@@ -175,7 +171,7 @@ const SettingsPage = () => {
       setTimeout(() => { window.location.reload(); }, 1000);
     } catch (error) {
       toast.dismiss(loadingToast);
-      toast.error('فشل في استرجاع البيانات. تأكد من اختيار ملف نسخة احتياطية صحيح (.bak أو .txt)');
+      toast.error('فشل في استرجاع البيانات. تأكد من اختيار ملف نسخة احتياطية (JSON) صحيح.');
     }
     e.target.value = '';
   };
@@ -290,7 +286,6 @@ const SettingsPage = () => {
 
       {activeModal === 'categories' && (
         <div className="fixed inset-0 bg-white z-50 flex flex-col animate-in slide-in-from-left duration-200">
-          
           {selectedCatAction ? (
             <div className="bg-[#5D4037] text-white p-4 flex items-center justify-between transition-colors shadow-md z-10">
               <div className="flex items-center">
@@ -300,21 +295,9 @@ const SettingsPage = () => {
                 <h2 className="font-bold text-lg">1 محدد</h2>
               </div>
               <div className="flex items-center gap-2">
-                <button 
-                  onClick={() => setShowEditCatModal({old: selectedCatAction, new: selectedCatAction})} 
-                  className="p-2 hover:bg-white/20 rounded-full transition-colors"
-                  title="تعديل"
-                >
-                  <Pencil className="w-5 h-5" />
-                </button>
+                <button onClick={() => setShowEditCatModal({old: selectedCatAction, new: selectedCatAction})} className="p-2 hover:bg-white/20 rounded-full transition-colors" title="تعديل"><Pencil className="w-5 h-5" /></button>
                 {selectedCatAction !== 'عام' && (
-                  <button 
-                    onClick={() => handleDeleteCategory(selectedCatAction)} 
-                    className="p-2 hover:bg-white/20 rounded-full transition-colors"
-                    title="حذف"
-                  >
-                    <Trash2 className="w-5 h-5 text-red-300" />
-                  </button>
+                  <button onClick={() => handleDeleteCategory(selectedCatAction)} className="p-2 hover:bg-white/20 rounded-full transition-colors" title="حذف"><Trash2 className="w-5 h-5 text-red-300" /></button>
                 )}
               </div>
             </div>
@@ -343,9 +326,7 @@ const SettingsPage = () => {
                 onMouseDown={() => handleLongPressStart(cat)}
                 onMouseUp={handleLongPressEnd}
                 onMouseLeave={handleLongPressEnd}
-                onClick={() => {
-                  if (selectedCatAction) setSelectedCatAction(selectedCatAction === cat ? null : cat);
-                }}
+                onClick={() => { if (selectedCatAction) setSelectedCatAction(selectedCatAction === cat ? null : cat); }}
               >
                 <div className="flex items-center gap-3 w-2/3">
                   <span className={`truncate ${selectedCatAction === cat ? 'text-[#5D4037]' : 'text-gray-800'}`}>{cat}</span>
@@ -411,20 +392,30 @@ const SettingsPage = () => {
               </button>
             </div>
 
-            <div className="space-y-3 pb-4 border-b">
+            {/* التعديل: قسم التنزيل والمشاركة مفصولين */}
+            <div className="space-y-4 pb-5 border-b">
               <div>
-                <p className="font-bold text-gray-800">تصدير ومشاركة النسخة الاحتياطية</p>
-                <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-                  احفظ بياناتك خارج الهاتف (واتساب / Google Drive) لضمان عدم ضياعها في حال مسح التطبيق أو فرمتة الهاتف.
+                <p className="font-bold text-gray-800 text-lg">تصدير النسخة الاحتياطية</p>
+                <p className="text-sm text-gray-500 mt-1 leading-relaxed">
+                  احفظ بياناتك كملف نصي (JSON) لضمان عدم ضياعها في حال مسح التطبيق.
                 </p>
               </div>
-              <button
-                onClick={handleBackupShare}
-                className="w-full bg-[#5D4037] hover:bg-[#4a332c] text-white font-bold py-3.5 px-4 rounded-xl transition-all flex items-center justify-center gap-3 shadow-md active:scale-95"
-              >
-                <Share2 className="w-5 h-5" />
-                مشاركة وحفظ النسخة الآن
-              </button>
+              <div className="flex gap-3">
+                <button
+                  onClick={handleDownloadFile}
+                  className="flex-1 bg-[#5D4037] hover:bg-[#4a332c] text-white font-bold py-3.5 rounded-xl transition-all flex justify-center items-center gap-2 shadow-md active:scale-95"
+                >
+                  <Download className="w-5 h-5" />
+                  تنزيل النسخة
+                </button>
+                <button
+                  onClick={handleShareNative}
+                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-[#5D4037] font-bold py-3.5 rounded-xl transition-all flex justify-center items-center gap-2 border border-gray-200 shadow-sm active:scale-95"
+                >
+                  <Share2 className="w-5 h-5" />
+                  مشاركة
+                </button>
+              </div>
             </div>
 
             <div className="space-y-3">
@@ -434,10 +425,10 @@ const SettingsPage = () => {
                   قم برفع ملف النسخة الاحتياطية (.json) لاستعادة حساباتك السابقة.
                 </p>
               </div>
-              <input type="file" ref={fileInputRef} className="hidden" accept=".json" onChange={handleRestoreFile} />
+              <input type="file" ref={fileInputRef} className="hidden" accept=".json,.txt,.bak" onChange={handleRestoreFile} />
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="w-full bg-gray-100 hover:bg-gray-200 text-[#5D4037] font-bold py-3.5 px-4 rounded-xl transition-all flex items-center justify-center gap-3 border border-gray-200 active:scale-95"
+                className="w-full bg-white hover:bg-gray-50 text-[#5D4037] font-bold py-3.5 px-4 rounded-xl transition-all flex items-center justify-center gap-3 border-2 border-dashed border-[#5D4037]/40 active:scale-95"
               >
                 <Download className="w-5 h-5" />
                 رفع ملف الاسترجاع
