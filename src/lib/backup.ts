@@ -6,132 +6,47 @@ const DB_NAME = 'LedgerDB';
 const DB_VERSION = 1;
 
 /**
- * دالة مساعدة لضغط البيانات باستخدام Gzip (تحسين الأداء)
+ * دالة مساعدة لجلب وتجهيز بيانات النسخة الاحتياطية (بدون ضغط)
  */
-async function compressData(data: string): Promise<string> {
-  try {
-    // استخدام CompressionStream API إن توفرت
-    if ('CompressionStream' in window) {
-      const stream = new (window as any).CompressionStream('gzip');
-      const writer = stream.writable.getWriter();
-      writer.write(new TextEncoder().encode(data));
-      writer.close();
-      
-      const reader = stream.readable.getReader();
-      const chunks: Uint8Array[] = [];
-      let result = await reader.read();
-      while (!result.done) {
-        chunks.push(result.value);
-        result = await reader.read();
-      }
-      
-      const compressed = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
-      let offset = 0;
-      for (const chunk of chunks) {
-        compressed.set(chunk, offset);
-        offset += chunk.length;
-      }
-      
-      // تحويل إلى Base64 للتوافقية
-      return btoa(String.fromCharCode(...compressed));
+async function generateBackupData(): Promise<string> {
+  const [clients, transactions] = await Promise.all([
+    getAllClients(),
+    getAllTransactions()
+  ]);
+
+  const backupData = {
+    clients,
+    transactions,
+    exportDate: new Date().toISOString(),
+    version: '2.0', 
+    appVersion: '1.0.0'
+  };
+
+  let finalData = JSON.stringify(backupData, null, 2); // تنسيق مقروء وحقيقي
+
+  if (typeof encrypt === 'function') {
+    try {
+      finalData = encrypt(finalData);
+    } catch (e) {
+      console.warn("Encryption failed, saving raw JSON");
     }
-  } catch (error) {
-    console.warn('Compression failed, using uncompressed data:', error);
   }
-  
-  return data;
+  return finalData;
 }
 
 /**
- * دالة مساعدة لفك ضغط البيانات
+ * 1. دالة أمر إجباري لتنزيل النسخة الاحتياطية كملف JSON حقيقي
  */
-async function decompressData(data: string): Promise<string> {
+export async function downloadBackup(): Promise<void> {
   try {
-    // محاولة فك الضغط إذا كانت البيانات مضغوطة
-    if ('DecompressionStream' in window) {
-      const binaryString = atob(data);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      
-      const stream = new (window as any).DecompressionStream('gzip');
-      const writer = stream.writable.getWriter();
-      writer.write(bytes);
-      writer.close();
-      
-      const reader = stream.readable.getReader();
-      const chunks: Uint8Array[] = [];
-      let result = await reader.read();
-      while (!result.done) {
-        chunks.push(result.value);
-        result = await reader.read();
-      }
-      
-      const decompressed = new TextDecoder().decode(
-        new Uint8Array(chunks.reduce((a, b) => a + b.length, 0))
-      );
-      return decompressed;
-    }
-  } catch (error) {
-    console.warn('Decompression failed, assuming uncompressed data:', error);
-  }
-  
-  return data;
-}
-
-export async function exportBackup(): Promise<void> {
-  try {
-    // جلب البيانات بالتوازي لتحسين الأداء
-    const [clients, transactions] = await Promise.all([
-      getAllClients(),
-      getAllTransactions()
-    ]);
-
-    const backupData = {
-      clients,
-      transactions,
-      exportDate: new Date().toISOString(),
-      version: '2.0', // إصدار جديد مع ميزات محسّنة
-      appVersion: '1.0.0'
-    };
-
-    let finalData = JSON.stringify(backupData);
-
-    // التشفير (إذا كانت الدالة متاحة)
-    if (typeof encrypt === 'function') {
-      finalData = encrypt(finalData);
-    }
-
-    // محاولة ضغط البيانات
-    const compressedData = await compressData(finalData);
-    const isCompressed = compressedData !== finalData;
-
-    // إنشاء ملف النسخة الاحتياطية
-    const fileName = `Ledger-Backup-${new Date().toISOString().split('T')[0]}.${isCompressed ? 'bak' : 'txt'}`;
-    const file = new File([compressedData], fileName, { type: 'application/octet-stream' });
-
-    // 1. محاولة المشاركة الأصلية (واتساب، درايف، الخ) - الطريقة الأسرع
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({
-          files: [file],
-          title: 'نسخة احتياطية - دفتر الحسابات',
-          text: 'احتفظ بهذا الملف في مكان آمن لاسترجاع بياناتك لاحقاً. البيانات مشفرة وآمنة.'
-        });
-        toast.success('تم مشاركة النسخة الاحتياطية بنجاح!');
-        return;
-      } catch (shareError: any) {
-        // إذا ألغى المستخدم المشاركة، لا نعتبرها خطأ
-        if (shareError.name !== 'AbortError') {
-          console.warn('Share failed, trying download:', shareError);
-        }
-      }
-    }
-
-    // 2. محاولة التنزيل المباشر كملف (سريع وموثوق)
-    const blob = new Blob([compressedData], { type: 'application/octet-stream' });
+    const finalData = await generateBackupData();
+    const fileName = `Ledger-Backup-${new Date().toISOString().split('T')[0]}.json`;
+    
+    // إنشاء ملف حقيقي بصيغة JSON
+    const blob = new Blob([finalData], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
+    
+    // أمر إجباري للنظام والـ APK للتنزيل
     const link = document.createElement('a');
     link.href = url;
     link.download = fileName;
@@ -139,65 +54,59 @@ export async function exportBackup(): Promise<void> {
     document.body.appendChild(link);
     link.click();
     
-    // تنظيف الموارد فوراً
+    // تنظيف الذاكرة
     setTimeout(() => {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-    }, 100);
+    }, 150);
 
-    toast.success('تم تنزيل النسخة الاحتياطية بنجاح!');
-
+    toast.success('تم تنزيل النسخة الاحتياطية بنجاح كملف JSON حقيقي ✓');
   } catch (error) {
-    console.error('Backup Error:', error);
-    // 3. الخطة البديلة: نسخ البيانات إلى الحافظة (Clipboard)
-    await fallbackBackupToClipboard();
+    console.error('Download Error:', error);
+    toast.error('حدث خطأ أثناء تنزيل النسخة الاحتياطية');
   }
 }
 
 /**
- * دالة احتياطية لنسخ البيانات إلى الحافظة
+ * 2. دالة لفتح قائمة المشاركة الأصلية للهاتف (واتساب، درايف، الخ)
  */
-async function fallbackBackupToClipboard(): Promise<void> {
+export async function shareBackup(): Promise<void> {
   try {
-    const [clients, transactions] = await Promise.all([
-      getAllClients(),
-      getAllTransactions()
-    ]);
+    const finalData = await generateBackupData();
+    const fileName = `Ledger-Backup-${new Date().toISOString().split('T')[0]}.json`;
+    
+    // تحويل البيانات لملف جاهز للمشاركة
+    const file = new File([finalData], fileName, { type: 'application/json' });
 
-    const backupData = {
-      clients,
-      transactions,
-      exportDate: new Date().toISOString()
-    };
-
-    let finalData = JSON.stringify(backupData);
-
-    if (typeof encrypt === 'function') {
-      finalData = encrypt(finalData);
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({
+        files: [file],
+        title: 'نسخة احتياطية - دفتر الحسابات',
+        text: 'ملف النسخة الاحتياطية (JSON) لبيانات التطبيق.'
+      });
+      toast.success('تم فتح قائمة المشاركة ✓');
+    } else {
+      toast.error('جهازك لا يدعم المشاركة المباشرة للملفات. سيتم التنزيل بدلاً من ذلك.');
+      await downloadBackup();
     }
-
-    await navigator.clipboard.writeText(finalData);
-    toast.success('✓ تم نسخ البيانات! يمكنك فتح واتساب وعمل "لصق" (Paste) لحفظها.');
-  } catch (clipboardError) {
-    console.error('Clipboard Error:', clipboardError);
-    toast.error('حدث خطأ أثناء إنشاء النسخة الاحتياطية. يرجى المحاولة لاحقاً.');
+  } catch (error: any) {
+    // تجاهل الخطأ إذا المستخدم أقفل قائمة المشاركة بنفسه
+    if (error.name !== 'AbortError') {
+      console.error('Share Error:', error);
+      toast.error('فشلت المشاركة، جاري تنزيل الملف كبديل...');
+      await downloadBackup();
+    }
   }
 }
 
 /**
- * استيراد النسخة الاحتياطية مع دعم الضغط والتشفير
+ * استيراد النسخة الاحتياطية (تقرأ ملفات JSON فوراً)
  */
 export async function importBackup(file: File): Promise<{ clients: number; transactions: number }> {
   try {
     let text = await file.text();
-
-    // محاولة فك الضغط إذا كانت البيانات مضغوطة
-    if (file.name.endsWith('.bak')) {
-      text = await decompressData(text);
-    }
-
-    // فك التشفير إذا لزم الأمر
     let decrypted = text;
+    
     if (typeof decrypt === 'function') {
       try {
         decrypted = decrypt(text);
@@ -213,12 +122,10 @@ export async function importBackup(file: File): Promise<{ clients: number; trans
 
     const data = JSON.parse(decrypted) as { clients: Client[]; transactions: Transaction[] };
 
-    // التحقق من صحة البيانات
     if (!Array.isArray(data.clients) || !Array.isArray(data.transactions)) {
       throw new Error('صيغة البيانات غير صحيحة');
     }
 
-    // مسح القاعدة القديمة بكفاءة أعلى
     const db = await openDB(DB_NAME, DB_VERSION);
     const txClear = db.transaction(['clients', 'transactions'], 'readwrite');
     
@@ -226,10 +133,8 @@ export async function importBackup(file: File): Promise<{ clients: number; trans
       txClear.objectStore('clients').clear(),
       txClear.objectStore('transactions').clear()
     ]);
-    
     await txClear.done;
 
-    // استرجاع البيانات بالتوازي لتحسين الأداء
     const txInsert = db.transaction(['clients', 'transactions'], 'readwrite');
     
     const clientPromises = (data.clients || []).map(c => 
@@ -242,8 +147,6 @@ export async function importBackup(file: File): Promise<{ clients: number; trans
     await Promise.all([...clientPromises, ...transactionPromises]);
     await txInsert.done;
 
-    toast.success(`✓ تم استرجاع البيانات: ${data.clients?.length || 0} عميل، ${data.transactions?.length || 0} عملية`);
-
     return { 
       clients: data.clients?.length || 0, 
       transactions: data.transactions?.length || 0 
@@ -251,51 +154,29 @@ export async function importBackup(file: File): Promise<{ clients: number; trans
   } catch (error) {
     console.error('Import Error:', error);
     const errorMessage = error instanceof Error ? error.message : 'فشل استرجاع البيانات';
-    toast.error(errorMessage);
     throw new Error(errorMessage);
   }
 }
 
-/**
- * دالة لحذف النسخة الاحتياطية القديمة (تنظيف تلقائي)
- */
 export async function cleanOldBackups(): Promise<void> {
-  try {
-    // هذه الدالة يمكن استخدامها لتنظيف النسخ الاحتياطية القديمة من التخزين المحلي
-    const db = await openDB(DB_NAME, DB_VERSION);
-    const settings = await db.getAll('settings');
-    
-    // يمكن إضافة منطق لحذف النسخ القديمة بناءً على التاريخ
-    console.log('Cleanup completed');
-  } catch (error) {
-    console.warn('Cleanup failed:', error);
-  }
+  // دالة فارغة حالياً للتنظيف المستقبلي
 }
 
-/**
- * دالة لإنشاء نسخة احتياطية مجدولة تلقائياً
- */
 export async function scheduleAutoBackup(intervalMinutes: number = 60): Promise<void> {
   try {
     const db = await openDB(DB_NAME, DB_VERSION);
-    
-    // حفظ إعدادات النسخ الاحتياطي التلقائي
-    await db.put('settings', {
-      key: 'autoBackupInterval',
-      value: intervalMinutes.toString()
-    });
+    await db.put('settings', { key: 'autoBackupInterval', value: intervalMinutes.toString() });
 
-    // إنشاء مؤقت للنسخ الاحتياطي التلقائي
     setInterval(async () => {
       try {
-        await exportBackup();
+        await downloadBackup(); // التحديث الجديد: ينزل الملف تلقائياً
         console.log('Auto backup completed');
       } catch (error) {
         console.error('Auto backup failed:', error);
       }
     }, intervalMinutes * 60 * 1000);
 
-    toast.success(`✓ تم تفعيل النسخ الاحتياطي التلقائي كل ${intervalMinutes} دقيقة`);
+    toast.success(`✓ تم تفعيل التنزيل التلقائي كل ${intervalMinutes} دقيقة`);
   } catch (error) {
     console.error('Schedule error:', error);
   }
