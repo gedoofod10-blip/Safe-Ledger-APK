@@ -6,7 +6,7 @@ const DB_NAME = 'LedgerDB';
 const DB_VERSION = 1;
 
 /**
- * دالة مساعدة لجلب وتجهيز بيانات النسخة الاحتياطية (بدون ضغط)
+ * جلب وتجهيز البيانات كملف نصي نقي (JSON) - بدون أي ضغط
  */
 async function generateBackupData(): Promise<string> {
   const [clients, transactions] = await Promise.all([
@@ -18,12 +18,13 @@ async function generateBackupData(): Promise<string> {
     clients,
     transactions,
     exportDate: new Date().toISOString(),
-    version: '2.0', 
+    version: '2.0',
     appVersion: '1.0.0'
   };
 
-  let finalData = JSON.stringify(backupData, null, 2); // تنسيق مقروء وحقيقي
+  let finalData = JSON.stringify(backupData, null, 2);
 
+  // التشفير (إذا كان متاحاً)
   if (typeof encrypt === 'function') {
     try {
       finalData = encrypt(finalData);
@@ -35,7 +36,7 @@ async function generateBackupData(): Promise<string> {
 }
 
 /**
- * 1. دالة أمر إجباري لتنزيل النسخة الاحتياطية كملف JSON حقيقي
+ * 1. التنزيل الإجباري للنسخة كملف JSON حقيقي
  */
 export async function downloadBackup(): Promise<void> {
   try {
@@ -46,7 +47,7 @@ export async function downloadBackup(): Promise<void> {
     const blob = new Blob([finalData], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     
-    // أمر إجباري للنظام والـ APK للتنزيل
+    // أمر إجباري للتنزيل
     const link = document.createElement('a');
     link.href = url;
     link.download = fileName;
@@ -60,7 +61,7 @@ export async function downloadBackup(): Promise<void> {
       URL.revokeObjectURL(url);
     }, 150);
 
-    toast.success('تم تنزيل النسخة الاحتياطية بنجاح كملف JSON حقيقي ✓');
+    toast.success('تم تنزيل النسخة الاحتياطية بنجاح كملف JSON ✓');
   } catch (error) {
     console.error('Download Error:', error);
     toast.error('حدث خطأ أثناء تنزيل النسخة الاحتياطية');
@@ -68,14 +69,13 @@ export async function downloadBackup(): Promise<void> {
 }
 
 /**
- * 2. دالة لفتح قائمة المشاركة الأصلية للهاتف (واتساب، درايف، الخ)
+ * 2. فتح قائمة المشاركة الأصلية للهاتف
  */
 export async function shareBackup(): Promise<void> {
   try {
     const finalData = await generateBackupData();
     const fileName = `Ledger-Backup-${new Date().toISOString().split('T')[0]}.json`;
     
-    // تحويل البيانات لملف جاهز للمشاركة
     const file = new File([finalData], fileName, { type: 'application/json' });
 
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -86,21 +86,20 @@ export async function shareBackup(): Promise<void> {
       });
       toast.success('تم فتح قائمة المشاركة ✓');
     } else {
-      toast.error('جهازك لا يدعم المشاركة المباشرة للملفات. سيتم التنزيل بدلاً من ذلك.');
+      toast.error('جهازك لا يدعم المشاركة المباشرة، سيتم التنزيل بدلاً من ذلك.');
       await downloadBackup();
     }
   } catch (error: any) {
-    // تجاهل الخطأ إذا المستخدم أقفل قائمة المشاركة بنفسه
     if (error.name !== 'AbortError') {
       console.error('Share Error:', error);
-      toast.error('فشلت المشاركة، جاري تنزيل الملف كبديل...');
+      toast.error('فشلت المشاركة، جاري التنزيل بدلاً من ذلك...');
       await downloadBackup();
     }
   }
 }
 
 /**
- * استيراد النسخة الاحتياطية (تقرأ ملفات JSON فوراً)
+ * 3. استيراد النسخة الاحتياطية (يستقبل JSON فقط)
  */
 export async function importBackup(file: File): Promise<{ clients: number; transactions: number }> {
   try {
@@ -153,13 +152,13 @@ export async function importBackup(file: File): Promise<{ clients: number; trans
     };
   } catch (error) {
     console.error('Import Error:', error);
-    const errorMessage = error instanceof Error ? error.message : 'فشل استرجاع البيانات';
+    const errorMessage = error instanceof Error ? error.message : 'فشل استرجاع البيانات. تأكد من صحة الملف.';
     throw new Error(errorMessage);
   }
 }
 
 export async function cleanOldBackups(): Promise<void> {
-  // دالة فارغة حالياً للتنظيف المستقبلي
+  // للتنظيف المستقبلي
 }
 
 export async function scheduleAutoBackup(intervalMinutes: number = 60): Promise<void> {
@@ -169,7 +168,7 @@ export async function scheduleAutoBackup(intervalMinutes: number = 60): Promise<
 
     setInterval(async () => {
       try {
-        await downloadBackup(); // التحديث الجديد: ينزل الملف تلقائياً
+        await downloadBackup();
         console.log('Auto backup completed');
       } catch (error) {
         console.error('Auto backup failed:', error);
